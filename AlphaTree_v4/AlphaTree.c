@@ -8,7 +8,7 @@
 //#include <opencv2/opencv.hpp>
 #include <time.h>
 
-#define DEBUG 1
+#define DEBUG 0
 //#define max(a,b) (a)>(b)?(a):(b)
 //#define min(a,b) (a)>(b)?(b):(a)
 
@@ -53,8 +53,10 @@ typedef struct HQueue
 	uint32 min_level, max_level;
 }HQueue;
 
-void hqueue_init(HQueue* hqueue, uint64 qsize, uint32 *dhist, uint32 dhistsize)
+
+HQueue* newHQueue(uint64 qsize, uint32 *dhist, uint32 dhistsize)
 {
+	HQueue* hqueue = (HQueue*)malloc(sizeof(HQueue));
 	hqueue->queue = (uint32*)malloc((size_t)qsize * sizeof(uint32));
 	hqueue->qidx = (hqueue_index*)malloc((size_t)(dhistsize + 1) * sizeof(hqueue_index));
 
@@ -70,9 +72,11 @@ void hqueue_init(HQueue* hqueue, uint64 qsize, uint32 *dhist, uint32 dhistsize)
 	}
 	hqueue->qidx[dhistsize].bottom = 0;
 	hqueue->qidx[dhistsize].cur = 1;
+
+	return hqueue;
 }
 
-void hqueue_free(HQueue* hqueue)
+void deleteHQueue(HQueue* hqueue)
 {
 	free(hqueue->queue);
 	free(hqueue->qidx);
@@ -215,10 +219,10 @@ inline AlphaNode* NewAlphaNode(AlphaTree* tree, uint8 level)
 	AlphaNode *pNew = tree->node + tree->curSize++;
 	pNew->level = level;
 	pNew->minPix = (pixel)-1;
-	//	pNew->minPix = 0;
-	//	pNew->sumPix = 0.0;
-	//	pNew->parent = NULL;
-	//	pNew->area = 0;
+	pNew->minPix = 0;
+	pNew->sumPix = 0.0;
+	pNew->parent = NULL;
+	pNew->area = 0;
 
 	return pNew;
 }
@@ -226,33 +230,37 @@ inline AlphaNode* NewAlphaNode(AlphaTree* tree, uint8 level)
 
 void Flood(AlphaTree* tree, uint8* img, uint32 height, uint32 width, uint32 channel)
 {
-	uint64 tmp_mem_size, tree_mem_size, tree_size_estimate;
-	uint32 imgsize, dimgsize, nredges;
+	uint32 imgsize, dimgsize, nredges, max_level, current_level, next_level, x0, p, dissim;
 	uint32 numlevels;
 	HQueue* hqueue;
+	uint32 *dhist;
+	pixel *dimg;
+	AlphaNode *pChild, **levelroot;
+	uint8 *isVisited;
 
 	imgsize = width * height;
 	nredges = width * (height - 1) + (width - 1) * height;
 	dimgsize = 2 * width * height; //To make indexing easier
 	numlevels = 1 << (8 * sizeof(uint8));
 
-	tmp_mem_size = imgsize * ISVISITED_ELEMENT_SIZE + (nredges + 1) * (HQUEUE_ELEMENT_SIZE)+dimgsize * (DIMG_ELEMENT_SIZE)+
-		numlevels * (LEVELROOT_ELEMENT_SIZE + DHIST_ELEMENT_SIZE + sizeof(hqueue_index)) + sizeof(hqueue_index) + LEVELROOT_ELEMENT_SIZE;
+	//tmp_mem_size = imgsize * ISVISITED_ELEMENT_SIZE + (nredges + 1) * (HQUEUE_ELEMENT_SIZE)+dimgsize * (DIMG_ELEMENT_SIZE)+ 
+	//numlevels * (LEVELROOT_ELEMENT_SIZE + DHIST_ELEMENT_SIZE + sizeof(hqueue_index)) + sizeof(hqueue_index) + LEVELROOT_ELEMENT_SIZE;
 	
-	uint32* dhist = (uint32*)malloc((size_t)numlevels * sizeof(uint32));
-	pixel* dimg = (pixel*)malloc((size_t)dimgsize * sizeof(pixel));
-	AlphaNode** levelroot = (AlphaNode**)malloc((size_t)(numlevels + 1) * LEVELROOT_ELEMENT_SIZE);
-	uint8* isVisited = (uint8*)malloc((size_t)imgsize * ISVISITED_ELEMENT_SIZE);
+
+	dhist = (uint32*)malloc((size_t)numlevels * sizeof(uint32));
+	dimg = (pixel*)malloc((size_t)dimgsize * sizeof(pixel));
+	levelroot = (AlphaNode**)malloc((size_t)(numlevels + 1) * LEVELROOT_ELEMENT_SIZE);
+	isVisited = (uint8*)malloc((size_t)imgsize * ISVISITED_ELEMENT_SIZE);
 	memset(dhist, 0, (size_t)numlevels * sizeof(uint32));
 	memset(levelroot, 0, (size_t)(numlevels + 1) * LEVELROOT_ELEMENT_SIZE);
 	memset(isVisited, 0, (size_t)imgsize * ISVISITED_ELEMENT_SIZE);
 
 
-	uint32 max_level = numlevels - 1;
+	max_level = (uint8)(numlevels - 1);
 	
 	compute_dimg(dimg, dhist, img, height, width, channel);
 	dhist[max_level]++;
-	hqueue_init(hqueue, nredges + 1, dhist, numlevels);
+	hqueue = newHQueue(nredges + 1, dhist, numlevels);
 
 	tree->height = height;
 	tree->width = width;
@@ -260,16 +268,14 @@ void Flood(AlphaTree* tree, uint8* img, uint32 height, uint32 width, uint32 chan
 	tree->curSize = 0;
 	tree->maxSize = imgsize + 1;//tree size estimation
 	tree->parentAry = (AlphaNode**)malloc((size_t)imgsize * sizeof(AlphaNode*));
-	tree->node = (AlphaNode*)malloc((size_t)tree_size_estimate * sizeof(AlphaNode));
-	memset(tree->node, 0, (size_t)tree_size_estimate * sizeof(AlphaNode));
+	tree->node = (AlphaNode*)malloc((size_t)tree->maxSize * sizeof(AlphaNode));
+	//memset(tree->node, 0, (size_t)tree->maxSize * sizeof(AlphaNode));
 
-	levelroot[max_level + 1] = NewAlphaNode(tree, max_level);
+	levelroot[max_level + 1] = NewAlphaNode(tree, (uint8)max_level);
 	levelroot[max_level + 1]->parent = levelroot[max_level + 1];
 
-	AlphaNode *pChild;
-	uint32 current_level = max_level, next_level;
-	uint32 x0 = imgsize >> 1;
-	uint32 p, q, dissim;
+	current_level = max_level;
+	x0 = imgsize >> 1;
 	hqueue_push(hqueue, x0, current_level);
 
 	pChild = levelroot[max_level + 1];
@@ -296,7 +302,7 @@ void Flood(AlphaTree* tree, uint8* img, uint32 height, uint32 width, uint32 chan
 #if DELAYED_ANODE_ALLOC
 					levelroot[dissim] = ANODE_CANDIDATE;
 #else
-					levelroot[dissim] = NewAlphaNode(tree, dissim);
+					levelroot[dissim] = NewAlphaNode(tree, (uint8)dissim);
 #endif
 			}
 			if (RIGHT_AVAIL(p, width) && !isVisited[p + 1])
@@ -307,7 +313,7 @@ void Flood(AlphaTree* tree, uint8* img, uint32 height, uint32 width, uint32 chan
 #if DELAYED_ANODE_ALLOC
 					levelroot[dissim] = ANODE_CANDIDATE;
 #else
-					levelroot[dissim] = NewAlphaNode(tree, dissim);
+					levelroot[dissim] = NewAlphaNode(tree, (uint8)dissim);
 #endif
 			}
 			if (UP_AVAIL(p, width) && !isVisited[p - width])
@@ -318,7 +324,7 @@ void Flood(AlphaTree* tree, uint8* img, uint32 height, uint32 width, uint32 chan
 #if DELAYED_ANODE_ALLOC
 					levelroot[dissim] = ANODE_CANDIDATE;
 #else
-					levelroot[dissim] = NewAlphaNode(tree, dissim);
+					levelroot[dissim] = NewAlphaNode(tree, (uint8)dissim);
 #endif
 			}
 			if (DOWN_AVAIL(p, width, imgsize) && !isVisited[p + width])
@@ -329,7 +335,7 @@ void Flood(AlphaTree* tree, uint8* img, uint32 height, uint32 width, uint32 chan
 #if DELAYED_ANODE_ALLOC
 					levelroot[dissim] = ANODE_CANDIDATE;
 #else
-					levelroot[dissim] = NewAlphaNode(tree, dissim);
+					levelroot[dissim] = NewAlphaNode(tree, (uint8)dissim);
 #endif
 			}
 
@@ -342,7 +348,7 @@ void Flood(AlphaTree* tree, uint8* img, uint32 height, uint32 width, uint32 chan
 
 #if DELAYED_ANODE_ALLOC
 			if (levelroot[current_level] == ANODE_CANDIDATE)
-				levelroot[current_level] = NewAlphaNode(tree, current_level);
+				levelroot[current_level] = NewAlphaNode(tree, (uint8)current_level);
 #endif
 			connectPix2Node(tree, p, img[p], levelroot[current_level]);
 		}
@@ -353,14 +359,14 @@ void Flood(AlphaTree* tree, uint8* img, uint32 height, uint32 width, uint32 chan
 		{
 			levelroot[current_level] = pChild;
 			tree->curSize--;
-			memset((uint8*)(tree->node + tree->curSize), 0, sizeof(AlphaNode));
+			//memset((uint8*)(tree->node + tree->curSize), 0, sizeof(AlphaNode));
 		}
 
 		next_level = current_level + 1;
 		while (next_level <= max_level && (levelroot[next_level] == NULL))
 			next_level++;
 		if (levelroot[next_level] == ANODE_CANDIDATE)
-			levelroot[next_level] = NewAlphaNode(tree, next_level);
+			levelroot[next_level] = NewAlphaNode(tree, (uint8)next_level);
 		connectNode2Node(tree, levelroot[next_level], levelroot[current_level]);
 		pChild = levelroot[current_level];
 		levelroot[current_level] = NULL;
@@ -394,7 +400,20 @@ int main(int argc, char **argv)
 //	String str("C:/jwryu/RUG/2018/AlphaTree/imgdata/remote_sensing_img.pgm");
 //	Mat img = imread(str, CV_LOAD_IMAGE_GRAYSCALE);
 
-	uint8 testimg[9] = { 4, 4, 1, 4, 2, 2, 1, 2, 0 };
+	char *fname = "C:/jwryu/RUG/2018/AlphaTree/imgdata/remote_sensing_img_8bit_8281x8185.raw";
+	AlphaTree tree;
+	uint8 *img;
+	uint32 height, width, channel;
+	FILE *fp;
+
+	height = 8281;
+	width = 8185;
+	channel = 1;
+	img = (uint8*)malloc(height*width*sizeof(uint8));
+	fopen_s(&fp, fname, "r");
+	fread(img, sizeof(uint8), height*width*channel, fp);
+	fclose(fp);
+	//uint8 testimg[9] = { 4, 4, 1, 4, 2, 2, 1, 2, 0 };
 
 	//AlphaTree aTree;
 	//	struct timeval stop, start;
@@ -403,6 +422,7 @@ int main(int argc, char **argv)
 //	printf("Image size: %dx%dx%d", img.rows, img.cols, img.channels());
 	//	gettimeofday(&start, NULL);
 	start = clock();
+	BuildAlphaTree(&tree, img, height, width, channel);
 //	aTree.BuildAlphaTree((uint8*)img.data, img.rows, img.cols, img.channels());
 	stop = clock();
 	//	gettimeofday(&stop, NULL);
@@ -411,7 +431,7 @@ int main(int argc, char **argv)
 			//waitKey(0);
 	printf("Time Elapsed: %f", (double)(stop - start) / 1000.0);
 	getc(stdin);
+	free(img);
 //	img.release();
-
 	return 0;
 }
