@@ -15,7 +15,7 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="AlphaTree.c">
+    <ClCompile Include="AlphaTree_RGB.cpp">
       <Filter>소스 파일</Filter>
     </ClCompile>
   </ItemGroup>
