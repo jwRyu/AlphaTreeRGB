@@ -9,9 +9,14 @@
 #include <opencv2/opencv.hpp>
 #include <filesystem>
 #include <iostream>
+#include <ctime>
+#include <chrono>
+#include <fstream>
 using namespace std;
 
 #define INPUTIMAGE_DIR	"C:/Users/jwryu/Google Drive/RUG/2018/AlphaTree/imgdata/Colour"
+
+#define REPEAT 10	//program repetition for accurate runtime measuring
 
 #define DEBUG 1
 #define max(a,b) (a)>(b)?(a):(b)
@@ -33,12 +38,6 @@ using namespace std;
 
 #define M_PI       3.14159265358979323846 
 
-#define HQUEUE_ELEMENT_SIZE		4
-#define LEVELROOT_ELEMENT_SIZE	8
-#define DHIST_ELEMENT_SIZE		4
-#define DIMG_ELEMENT_SIZE		1
-#define ISVISITED_ELEMENT_SIZE	1
-
 typedef unsigned char uint8;
 typedef unsigned short uint16;
 typedef unsigned long uint32;
@@ -46,6 +45,8 @@ typedef unsigned long long uint64;
 
 typedef uint8 pixel[3]; //designed for 8-bit images
 
+double rmsd, nrmsd;
+uint32 TSE;
 
 #if DEBUG
 void* buf;
@@ -263,7 +264,6 @@ void Flood(AlphaTree* tree, pixel* img, uint32 height, uint32 width, uint32 chan
 	uint32 iChild, *levelroot;
 	uint8 *isVisited;
 	uint32 *pParentAry;
-	double nrmsd;
 
 	imgsize = width * height;
 	nredges = width * (height - 1) + (width - 1) * height;
@@ -273,10 +273,9 @@ void Flood(AlphaTree* tree, pixel* img, uint32 height, uint32 width, uint32 chan
 	//tmp_mem_size = imgsize * ISVISITED_ELEMENT_SIZE + (nredges + 1) * (HQUEUE_ELEMENT_SIZE)+dimgsize * (DIMG_ELEMENT_SIZE)+ 
 	//numlevels * (LEVELROOT_ELEMENT_SIZE + DHIST_ELEMENT_SIZE + sizeof(hqueue_index)) + sizeof(hqueue_index) + LEVELROOT_ELEMENT_SIZE;
 
-
 	dhist = (uint32*)malloc((size_t)numlevels * sizeof(uint32));
 	dimg = (uint8*)malloc((size_t)dimgsize * sizeof(uint8));
-	levelroot = (uint32*)malloc((uint32)(numlevels + 1) * LEVELROOT_ELEMENT_SIZE);
+	levelroot = (uint32*)malloc((uint32)(numlevels + 1) * sizeof(uint32));
 	isVisited = (uint8*)malloc((size_t)((imgsize + 7) >> 3));
 	for (p = 0; p < numlevels; p++)
 		levelroot[p] = NULL_LEVELROOT;
@@ -295,19 +294,12 @@ void Flood(AlphaTree* tree, pixel* img, uint32 height, uint32 width, uint32 chan
 	tree->curSize = 0;
 	
 	//tree size estimation
-	double tmp1, tmp2, tmp3;
-
-	nrmsd = 0;
+	rmsd = 0;
 	for (p = 0; p < numlevels; p++)
-		nrmsd += dhist[p] * dhist[p];
-	tmp1 = nrmsd - (double)nredges;
-	tmp2 = sqrt(tmp1);
-	tmp3 = tmp2 / ((double)nredges - 1.0);
-	
-	nrmsd = sqrt(nrmsd - (double)nredges) / ((double)nredges - 1.0);
+		rmsd += dhist[p] * dhist[p];
+	nrmsd = sqrt(rmsd - (double)nredges) / ((double)nredges - 1.0);
 	   
-	tree->maxSize = min(imgsize, (uint32)(imgsize * (exp(-M_PI * nrmsd) + 0.04)));
-
+	TSE = tree->maxSize = min(imgsize, (uint32)(imgsize * (exp(-M_PI * nrmsd) + 0.04)));
 	tree->parentAry = (uint32*)malloc((size_t)imgsize * sizeof(uint32));
 	tree->node = (AlphaNode*)malloc((size_t)tree->maxSize * sizeof(AlphaNode));
 	pParentAry = tree->parentAry;
@@ -465,13 +457,16 @@ int main(int argc, char **argv)
 	pixel *img;
 	uint32 width, height, channel;
 	uint32 cnt = 0;
+	ofstream f;
+
+	f.open("AlphaTree_RGB_Exp.dat");
 
 	std::string path = INPUTIMAGE_DIR;
 	for (auto & p : std::experimental::filesystem::directory_iterator(path))
 	{
-		if (cnt++ < 645 - 2) 
+		if (cnt++ < 2 - 2) 
 		{
-			//continue;
+//			continue;
 		}
 		cv::String str1(p.path().string().c_str());
 		cv::Mat cvimg = imread(str1, cv::IMREAD_ANYCOLOR);
@@ -495,18 +490,31 @@ int main(int argc, char **argv)
 		str1.clear();
 
 		clock_t start, stop;
+		double runtime, minruntime;
 
 		//	printf("Image size: %dx%dx%d", img.rows, img.cols, img.channels());
 			//	gettimeofday(&start, NULL);
-		tree = (AlphaTree*)malloc(sizeof(AlphaTree));
-		start = clock();
-		BuildAlphaTree(tree, img, height, width, channel);
-		stop = clock();
-		//	gettimeofday(&stop, NULL);
-		//		namedWindow("disp", WINDOW_AUTOSIZE); // Create a window for display.
-			//	imshow("disp", img);                // Show our image inside it.
-				//waitKey(0);
-		cout<<"Time Elapsed: " << (double)(stop - start) / 1000.0 << endl;
+
+		for (int testrep = 0; testrep < REPEAT; testrep++)
+		{
+			auto wcts = std::chrono::system_clock::now();
+
+			tree = (AlphaTree*)malloc(sizeof(AlphaTree));
+			//		start = clock();
+			BuildAlphaTree(tree, img, height, width, channel);
+
+			std::chrono::duration<double> wctduration = (std::chrono::system_clock::now() - wcts);
+			runtime = wctduration.count();
+			minruntime = testrep == 0 ? runtime : min(runtime, minruntime);
+
+			if(testrep < (REPEAT - 1))
+				DeleteAlphaTree(tree);
+		}
+		f << p.path().string().c_str() << '\t' << height << '\t' << width << '\t' << rmsd << '\t' << nrmsd << '\t' << TSE << tree->curSize << endl;
+		
+//		stop = clock();
+		
+		cout << "Time Elapsed: " << minruntime << "[Wall Clock]" << std::endl;
 		//getc(stdin);
 		free(img);
 		DeleteAlphaTree(tree);
