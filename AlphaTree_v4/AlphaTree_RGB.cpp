@@ -326,7 +326,7 @@ void Flood(AlphaTree* tree, pixel* img, uint32 height, uint32 width, uint32 chan
 	for (p = 0; p < numlevels; p++)
 		levelroot[p] = NULL_LEVELROOT;
 	memset(dhist, 0, (size_t)numlevels * sizeof(uint32));
-	memset(isVisited, 0, (size_t)(imgsize >> 3));
+	memset(isVisited, 0, (size_t)((imgsize + 7) >> 3));
 
 	max_level = (uint8)(numlevels - 1);
 	
